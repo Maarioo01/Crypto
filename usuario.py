@@ -8,7 +8,7 @@ class User:
     def email(self):
         return self.__email
     @email.setter
-    def name(self, value):
+    def email(self, value):
         self.__email = value
     @property
     def password(self):
