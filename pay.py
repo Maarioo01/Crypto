@@ -1,10 +1,11 @@
 class Pay:
 
-    def __init__(self, credit_card, email, address, restaurant):
+    def __init__(self, credit_card, email, address, restaurant, nonce):
         self.__credit_card = credit_card
         self.__email = email
         self.__address = address
         self.__restaurant = restaurant
+        self.__nonce = nonce
 
 
     @property

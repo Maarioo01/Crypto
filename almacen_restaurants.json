@@ -1,10 +1,10 @@
 [
   {
     "restaurant": "burger king",
-    "tags": "burger, fries"
+    "tags": ["burger","fries"]
   },
   {
     "restaurant": "goiko",
-    "tags": "burger"
+    "tags": ["burger"]
   }
 ]

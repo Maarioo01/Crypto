@@ -1,8 +1,9 @@
 class Order:
-    def __init__(self, restaurant, address, email):
+    def __init__(self, restaurant, address, email, nonce):
         self.__restaurant = restaurant
         self.__address = address
         self.__email = email
+        self.__nonce = nonce
 
     @property
     def restaurant(self):
