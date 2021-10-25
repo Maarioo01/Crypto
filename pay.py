@@ -1,9 +1,9 @@
 class Pay:
 
-    def __init__(self, credit_card, email, address, restaurant, nonce):
+    def __init__(self, credit_card, email, type, restaurant, nonce):
         self.__credit_card = credit_card
         self.__email = email
-        self.__address = address
+        self.__type = type
         self.__restaurant = restaurant
         self.__nonce = nonce
 
@@ -25,12 +25,12 @@ class Pay:
         self.__restaurant = value
 
     @property
-    def address(self):
-        return self.__address
+    def type(self):
+        return self.__type
 
-    @address.setter
-    def address(self, value):
-        self.__address = value
+    @type.setter
+    def type(self, value):
+        self.__type = value
 
     @property
     def email(self):

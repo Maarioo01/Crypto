@@ -1,9 +1,10 @@
 class Reserve:
-    def __init__(self, restaurant, day, hour, email):
+    def __init__(self, restaurant, day, hour, email, nonce):
         self.__restaurant = restaurant
         self.__day = day
         self.__hour = hour
         self.__email = email
+        self.__nonce = nonce
 
     @property
     def restaurant(self):
