@@ -1,7 +1,7 @@
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 
-class Chacha():
+class Chacha:
 
     def __init__(self, data, key, nonce, aad):
         self.__chacha = ChaCha20Poly1305(key)
@@ -9,8 +9,8 @@ class Chacha():
         self.__nonce = nonce
         self.__aad = aad
 
-    def encrypt(self, data, nonce, aad):
-        ct = self.__chacha.encrypt(nonce, data, aad)
+    def encrypt(self):
+        ct = self.__chacha.encrypt(self.__nonce, self.__data, self.__aad)
         return ct
 
     def decrypt(self, data, nonce, aad):
