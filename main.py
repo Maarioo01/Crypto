@@ -1,20 +1,18 @@
 from re import fullmatch
 import os
-import json
 import base64
 from chacha20 import Chacha
-from usuario import User
-from reserve import Reserve
-from Order import Order
-from pay import Pay
-from excepcion import Excepcion
+from database import Database
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 
-key = bytes("\xc7x\x01z\xaen\xa0i\xb8G\xa9\xc4!\xc7\xc2\x08!BX9\x8eA\0", encoding="utf-8")
+key = b"-\x8f%\x93\xf2\xa7\xa6C\xb2{BT\xd9\xdf\x86\x85\xbbl\x10')<\x18\xb2\x87z\xe7\t\x1er]\t"
 
 
 class App:
     def __init__(self):
-        pass
+        self.database = Database()
 
     # method to validate email
     @staticmethod
@@ -42,65 +40,57 @@ class App:
         return True
 
     @staticmethod
-    def open_json(url):
-        myfile = os.path.dirname(os.path.abspath(__file__)) + url
-        try:
-            with open(myfile, "r", encoding="utf-8", newline="") as file1:
-                data = json.load(file1)
-        except FileNotFoundError as error:
-            raise Excepcion("Wrong file or file path") from error
-        except json.JSONDecodeError as error:
-            raise Excepcion("Wrong JSON Format") from error
-        return data
-
-    @staticmethod
-    def write_json(url, data):
-        myfile = os.path.dirname(os.path.abspath(__file__)) + url
-        try:
-            with open(myfile, "w", encoding="utf-8", newline="") as file2:
-                json.dump(data, file2, indent=2)
-        except FileNotFoundError as error:
-            raise Excepcion("Wrong file or file path") from error
-        except json.JSONDecodeError as error:
-            raise Excepcion("Wrong JSON Format") from error
-
-    @staticmethod
     def byte_to_str(file):
+        # b64_string = file.decode('utf-8').strip
         b64_bytes = base64.urlsafe_b64encode(file)
         b64_string = b64_bytes.decode("ascii")
         return b64_string
 
     @staticmethod
     def str_to_byte(file):
+        # bytes_bis = file.encode('utf-8').strip
         b64_bytes_bis = file.encode("ascii")
         bytes_bis = base64.urlsafe_b64decode(b64_bytes_bis)
         return bytes_bis
 
-    # method to sign up
+    def save_key(self, data, nonce, aad):
+        key_object = Chacha(data, key, nonce, aad)
+        key_encrypt = key_object.encrypt()
+        string_key = self.byte_to_str(key_encrypt)
+        string_nonce_key = self.byte_to_str(nonce)
+        self.database.insert_key([string_key, string_nonce_key])
+        return True
+
+    # method to sign up HAY QUE HACER AUTENTICACION CON SCRYPT
     def sign_up(self, name, email, password):
         # first validate email and password
         if not self.validate_email(email) or not self.validate_password(password):
-            return
+            return False
         # open storage of users
-        data = self.open_json("\\almacen_usuarios.json")
-        if data:
-            for i in data:
-                # first check if the email already exist
-                if i['_User__name'] == name:
-                    print("User already exists")
-                    return False
-        # in case storage is empty or email doesn't exist, generate the encrypt key and store
-        nonce = os.urandom(12)
-        password_object = Chacha(bytes(password, encoding="utf-8"), key, nonce, bytes(name, encoding="utf-8"))
-        password_encrypt = password_object.encrypt()
+        list_data = self.database.read_content_user(name)
+        if len(list_data) != 0:
+            print("user already exits")
+            return False
+        # Encrypt password with scrypt
+        salt = os.urandom(16)
+        kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
+        password_encrypt = kdf.derive(bytes(password, encoding="utf-8"))
         string_password = self.byte_to_str(password_encrypt)
-        email_object = Chacha(bytes(email, encoding="utf-8"), key, nonce, bytes(name, encoding="utf-8"))
+        # encrypt email and salt with Chacha20Poly
+        nonce = os.urandom(12)
+        key_once = os.urandom(32)
+        email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(name, encoding="utf-8"))
         email_encrypt = email_object.encrypt()
+        salt_object = Chacha(salt, key_once, nonce, bytes(name, encoding="utf-8"))
+        salt_encrypt = salt_object.encrypt()
+        # bytes objects to str to save in db
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
-        user = User(name, string_email, string_password, string_nonce)
-        data.append(user.__dict__)
-        self.write_json("\\almacen_usuarios.json", data)
+        string_salt = self.byte_to_str(salt_encrypt)
+        self.database.insert_user([name, string_email, string_password, string_nonce, string_salt])
+        # encrypt masterkey with new nonce and save
+        nonce_key = os.urandom(12)
+        self.save_key(key_once, nonce_key, bytes(name, encoding="utf-8"))
         return True
         # save the updates
 
@@ -108,109 +98,104 @@ class App:
     def log_in(self, name, password):
         # first validate email and password
         if not self.validate_password(password):
-            return
-        # open storage of users
-        data = self.open_json("\\almacen_usuarios.json")
-        if data:
-            for i in data:
-                # search the email introduced
-                if i['_User__name'] == name:
-                    nonce = i['_User__nonce']
-                    bytes_nonce = self.str_to_byte(nonce)
-                    password_object = Chacha(bytes(password, encoding="utf-8"), key, bytes_nonce,
-                                             bytes(name, encoding="utf-8"))
-                    password_encrypt = password_object.encrypt()
-                    string_password = self.byte_to_str(password_encrypt)
-                    if i['_User__password'] == string_password:
-                        return True
-                    print("credentials don't match")
-                    return False
-                print("Name doesn't exit")
-                return False
-        print("Name doesn't exit")
-        return False
+            return False
+        # get the user by name from db
+        list_data = self.database.read_content_user(name)
+        if len(list_data) == 0:
+            print("user doesn't exit")
+            return False
+        # get the rowid to get the key
+        id_user = self.database.read_id_user(name)
+        # get key to decrypt salt
+        list_key = self.database.find_key(id_user[0])
+        bytes_key = self.str_to_byte(list_key[0])
+        bytes_nonce_key = self.str_to_byte(list_key[1])
+        key_object = Chacha(bytes_key, key, bytes_nonce_key, bytes(name, encoding="utf-8"))
+        key_once = key_object.decrypt()
+        salt = list_data[0][4]
+        bytes_salt = self.str_to_byte(salt)
+        nonce = self.str_to_byte(list_data[0][3])
+        salt_object = Chacha(bytes_salt, key_once, nonce, bytes(name, encoding="utf-8"))
+        salt_decrypt = salt_object.decrypt()
+        # encrypt password with the salt to compare
+        kdf = Scrypt(salt_decrypt, 32, 2 ** 14, 8, 1)
+        password_encrypt = kdf.derive(bytes(password, encoding="utf-8"))
+        string_password = self.byte_to_str(password_encrypt)
+        if list_data[0][2] != string_password:
+            print("Credentials doesn't match")
+            return False
+        return True
 
     # method to search restaurants/tags
     def search(self, tag):
-        # open the storage of restaurants
-        data = self.open_json("\\almacen_restaurants.json")
-        # create a list to save the tags
-        list_tags = []
-        for i in data:
-            if i["restaurant"] == tag:
-                print(tag)
-                return True
-            for j in i["tags"]:
-                if j == tag:
-                    list_tags.append(i["restaurant"])
-        if len(list_tags) == 0:
-            print("sorry, we don't have this service, try again please")
+        lista_restaurants = self.database.read_restaurant(tag)
+        if len(lista_restaurants) == 0:
+            print("theres no such a restaurant with this name")
             return False
-        print(list_tags)
-        return False
+        if len(lista_restaurants) == 1:
+            print(lista_restaurants[0][0])
+            return True
+        restaurant = ""  # variable para controlar si se ha metido mas de una vez el mismo nombre del restaurante
+        contador = 0
+        if len(lista_restaurants) > 1:
+            for i in lista_restaurants:
+                for j in i:
+                    if j != restaurant:
+                        print(j)
+                        restaurant = j
+                    else:
+                        contador += 1
+            if contador >= 1:
+                return True
+            return False  # False porque es la lista y lo suyo es que eliga un restaurante
 
     # method to reserve
+
     def reserve(self, restaurant, day, hour, email):
         # open the storage of reserves
-        data = self.open_json("\\almacen_reservas.json")
-        if data:
-            # check if the reserve is already done
-            for i in data:
-                if i["_Reserve__restaurant"] == restaurant and i["_Reserve__day"] == day and \
-                        i["_Reserve__hour"] == hour:
-                    nonce = i['_Reserve__nonce']
-                    bytes_nonce = self.str_to_byte(nonce)
-                    email_object = Chacha(bytes(email, encoding="utf-8"), key, bytes_nonce,
-                                          bytes(restaurant, encoding="utf-8"))
-                    email_encrypt = email_object.encrypt()
-                    string_email = self.byte_to_str(email_encrypt)
-                    if i["_Reserve__email"] == string_email:
-                        print("This reserve is already done")
-                        return
+        # buscar restaurant day y hour si lista vacia es que no hay reserva
+        list_restaurant = self.database.read_content_reserve([restaurant, day, hour])
+        if len(list_restaurant) != 0:
+            print("This reserve is already done")
+            return False
+        # encrypt email
         nonce = os.urandom(12)
-        email_object = Chacha(bytes(email, encoding="utf-8"), key, nonce, bytes(restaurant, encoding="utf-8"))
+        key_once = os.urandom(32)
+        email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(restaurant, encoding="utf-8"))
         email_encrypt = email_object.encrypt()
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
-        reserve = Reserve(restaurant, day, hour, string_email, string_nonce)
-        data.append(reserve.__dict__)
+        self.database.insert_reserve([restaurant, day, hour, string_email, string_nonce])
         print("reserve donde")
-        # save the updates
-        self.write_json("\\almacen_reservas.json", data)
-        option = input("select your payment method, cash or card: ")
-        self.checkout(option, email, "reserve", restaurant)
+        # save the updates and encrypt key with masterkey
+        nonce_key = os.urandom(12)
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        return True
 
     # method to order
-    def order(self, restaurant, address, email):
+    def order(self, restaurant, address, email, hour):
         # open the storage of orders
-        data = self.open_json("\\almacen_orders.json")
-        if data:
-            # check if order is already donde
-            for i in data:
-                if i["_Order__restaurant"] == restaurant:
-                    nonce = i['_Reserve__nonce']
-                    bytes_nonce = self.str_to_byte(nonce)
-                    email_object = Chacha(bytes(email, encoding="utf-8"), key, bytes_nonce,
-                                          bytes(restaurant, encoding="utf-8"))
-                    email_encrypt = email_object.encrypt()
-                    string_email = self.str_to_byte(email_encrypt)
-                    if i["_Order__email"] == string_email:
-                        print("This order is already done")
-                        return
-
+        # Con esta opción solo esta disponible hacer un pedido por cada hora es decir a las 2 no se pueden tener
+        # dos pedidos
+        list_order = self.database.read_content_order([restaurant, hour])
+        if len(list_order) != 0:
+            print("We can't offer you this service")
+            return False
+        # encrypt email and address
         nonce = os.urandom(12)
-        address_object = Chacha(bytes(address, encoding="utf-8"), key, nonce, bytes(restaurant, encoding="utf-8"))
+        key_once = os.urandom(32)
+        address_object = Chacha(bytes(address, encoding="utf-8"), key_once, nonce, bytes(restaurant, encoding="utf-8"))
         address_encrypt = address_object.encrypt()
         string_address = self.byte_to_str(address_encrypt)
-        email_object = Chacha(bytes(email, encoding="utf-8"), key, nonce, bytes(restaurant, encoding="utf-8"))
+        email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(restaurant, encoding="utf-8"))
         email_encrypt = email_object.encrypt()
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
-        order = Order(restaurant, string_address, string_email, string_nonce)
-        data.append(order.__dict__)
+        self.database.insert_order([restaurant, hour, string_address, string_email, string_nonce])
         print("Order done")
-        # save the updates
-        self.write_json("\\almacen_orders.json", data)
+        # save and encrypt key with masterkey
+        nonce_key = os.urandom(12)
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
         option = input("select your payment method, cash or card: ")
         while option != "cash" and option != "card":
             option = input("select your payment method: ").lower()
@@ -220,27 +205,31 @@ class App:
     def checkout(self, option, email, type, restaurant):
         if option == "card":
             credit_card = input("Introduce your number card: ")
-            self.payment_card(credit_card, email, type, restaurant)
-        return print("your payment will be made in delivery")
+            self.payment_card(credit_card, email, type, restaurant, option)
+        print("your payment will be made in delivery")
+        self.payment_card("None", email, type, restaurant, option)
 
     # method to pay
-    def payment_card(self, credit_card, email, type, restaurant):
+    def payment_card(self, credit_card, email, type, restaurant, option):
         # open the storage of credit-cards
-        data = self.open_json("\\almacen_credit_card.json")
-
+        # encrypt number of credit card and email
         nonce = os.urandom(12)
-        credit_card_object = Chacha(bytes(credit_card, encoding="utf-8"), key, nonce,
-                                    bytes(restaurant, encoding="utf-8"))
-        credit_card_encrypt = credit_card_object.encrypt()
-        string_credit_card = self.byte_to_str(credit_card_encrypt)
-        email_object = Chacha(bytes(email, encoding="utf-8"), key, nonce, bytes(restaurant, encoding="utf-8"))
+        key_once = os.urandom(32)
+        string_credit_card = credit_card
+        if credit_card != "None":
+            credit_card_object = Chacha(bytes(credit_card, encoding="utf-8"), key_once, nonce,
+                                        bytes(restaurant, encoding="utf-8"))
+            credit_card_encrypt = credit_card_object.encrypt()
+            string_credit_card = self.byte_to_str(credit_card_encrypt)
+        email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(restaurant, encoding="utf-8"))
         email_encrypt = email_object.encrypt()
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
-        pay_credit_card = Pay(string_credit_card, string_email, type, restaurant, string_nonce)
-        data.append(pay_credit_card.__dict__)
-        print("pay already done")
-        self.write_json("\\almacen_credit_card.json", data)
+        self.database.insert_payment([string_credit_card, string_email, type, restaurant, string_nonce, option])
+        print("pay already saved")
+        # save and encrypt key with masterkey
+        nonce_key = os.urandom(12)
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
         return True
 
 
@@ -279,9 +268,9 @@ def main():
     option = input("search, reserve or order?: ")
     while option != "exit":
         if option == "search":
-            search = input("What you want to search?: ")
+            search = input("What you want to search?: ").lower()
             while not app.search(search):
-                search = input("choose a restaurant: ")
+                search = input("choose a restaurant: ").lower()
         elif option == "reserve":
             restaurant = input("Introduce the restaurant: ")
             while not app.search(restaurant):
@@ -295,14 +284,59 @@ def main():
             restaurant = input("Introduce the restaurant: ")
             while not app.search(restaurant):
                 restaurant = input("Introduce the restaurant: ")
-            address = input("Introduce the address: ")
-            app.order(restaurant, address, email)
+            address = input("Introduce the address: ").lower()
+            hour = input("Introduce the hour: ")
+            app.order(restaurant, address, email, hour)
 
         option = input("search, reserve or order?: ")
 
     return
 
-# hacer metodo con doble key
+
+def main2():
+    app = App()
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    public_key = private_key.public_key()
+
+    pem_public = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    pem_private = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(bytes("password", encoding="utf-8"))
+    )
+    pem_private_str = app.byte_to_str(pem_private)
+    print(pem_private_str)
+    pem_public_str = app.byte_to_str(pem_public)
+    print(pem_public_str)
+    pem_private_bytes = app.str_to_byte(pem_private_str)
+    print(pem_private_bytes)
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "w") as file:
+        file.write(pem_private_str)
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "w") as file2:
+        file2.write(pem_public_str)
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
+        private_key2 = file.read()
+    print(private_key2)
+    pem_bytes2 = app.str_to_byte(private_key2)
+    print(pem_bytes2)
 
 
 main()
+
+"""RSA para firmar y verificar hay que generar clave publica , clave privada cifrada (No hace falta del todo porque es 
+ similar a serializar con contraseña) y clave publica sin cifrar. Esto se puede aplicar en firmar entera la base de 
+ datos para verificar si se ha cambiado algo o no, hacer una firma en cada pedido por si algun usuario tiene un 
+ problema y usar la verificacion para que el pedido es el mismo, igual con las reservas. LAS CLAVES PRIVADAS Y 
+ PUBLICAS SE GENERAN UNA VEZ Y SE PONDRAN ARRIBA PORQUE FIRMAMOS NOSOTROS, NO EL USUARIO"""
+
+"""Cambiar metodo de payment, ahora en reserve no se llama porque no se puede pagar una reserva por la app, solo se llama
+desde order, y para poder conseguir facilmente los id etc, se guardan todos en el mismo fichero, si el tipo es order
+credit number se pone a none. ADEMÁS HACER METODO PARA GUARDAR LA MASTER KEY(que vaya desde que se genera el nonce de la
+key hasta que se accede a la base, hacer metodo que se llame savekey y hace todo eso? añadir tambien regex de direeciones?"""

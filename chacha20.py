@@ -13,5 +13,7 @@ class Chacha:
         ct = self.__chacha.encrypt(self.__nonce, self.__data, self.__aad)
         return ct
 
-    def decrypt(self, data, nonce, aad):
-        self.__chacha.decrypt(nonce, data, aad)
+    def decrypt(self):
+        ct = self.__chacha.decrypt(self.__nonce, self.__data, self.__aad)
+        return ct
+
