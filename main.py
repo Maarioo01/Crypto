@@ -6,6 +6,8 @@ from database import Database
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 key = b"-\x8f%\x93\xf2\xa7\xa6C\xb2{BT\xd9\xdf\x86\x85\xbbl\x10')<\x18\xb2\x87z\xe7\t\x1er]\t"
 
@@ -170,6 +172,23 @@ class App:
         # save the updates and encrypt key with masterkey
         nonce_key = os.urandom(12)
         self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        todo_str = restaurant+day+hour+email
+        salt = os.urandom(16)
+        kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
+        todo_encrypt = kdf.derive(bytes(todo_str, encoding="utf-8"))
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
+            private_key = file.read()
+        private_key = self.str_to_byte(private_key)
+        private_key = serialization.load_pem_private_key(
+            private_key,
+            password=bytes("password", encoding="utf-8"),
+        )
+        signature = private_key.sign(todo_encrypt, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                                               salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        todo_encrypt_str = self.byte_to_str(todo_encrypt)
+        signature_str = self.byte_to_str(signature)
+        self.database.insert_sign_reserve([todo_encrypt_str, signature_str])
+
         return True
 
     # method to order
@@ -312,20 +331,25 @@ def main2():
         encryption_algorithm=serialization.BestAvailableEncryption(bytes("password", encoding="utf-8"))
     )
     pem_private_str = app.byte_to_str(pem_private)
-    print(pem_private_str)
     pem_public_str = app.byte_to_str(pem_public)
-    print(pem_public_str)
-    pem_private_bytes = app.str_to_byte(pem_private_str)
-    print(pem_private_bytes)
     with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "w") as file:
         file.write(pem_private_str)
     with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "w") as file2:
         file2.write(pem_public_str)
     with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
         private_key2 = file.read()
-    print(private_key2)
-    pem_bytes2 = app.str_to_byte(private_key2)
-    print(pem_bytes2)
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "r") as file:
+        public_key2 = file.read()
+
+    pem_private_bytes = app.str_to_byte(private_key2)
+    pem_public_bytes = app.str_to_byte(public_key2)
+
+    # Esto deserializa la clave
+
+    private_key = serialization.load_pem_private_key(
+        pem_private_bytes,
+        password=bytes("password", encoding="utf-8"),
+    )
 
 
 main()
@@ -339,4 +363,8 @@ main()
 """Cambiar metodo de payment, ahora en reserve no se llama porque no se puede pagar una reserva por la app, solo se llama
 desde order, y para poder conseguir facilmente los id etc, se guardan todos en el mismo fichero, si el tipo es order
 credit number se pone a none. ADEMÁS HACER METODO PARA GUARDAR LA MASTER KEY(que vaya desde que se genera el nonce de la
-key hasta que se accede a la base, hacer metodo que se llame savekey y hace todo eso? añadir tambien regex de direeciones?"""
+key hasta que se accede a la base, hacer metodo que se llame savekey y hace todo eso? añadir tambien regex de 
+direeciones?"""
+
+"""Hacer hash a los datos concatenados con Scrypt para hacer la función resumen y firmar, hacer en order y en 
+creditcard. HACER UNA CLASE APARTE QUE TENGA LOS METODOS DE LEER, SERIALIZAR Y DESERIALIZAR, FIRMAR Y VERIFICAR"""

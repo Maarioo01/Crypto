@@ -149,5 +149,13 @@ class Database:
         table.close()
         return datos
 
+    @staticmethod
+    def insert_sign_reserve(data):
+        table = sql.connect("App.db")
+        cursor = table.cursor()
+        instruction = f"INSERT INTO sign_reserve VALUES (?,?)"
+        cursor.execute(instruction, data)
+        table.commit()
+        table.close()
 
 
