@@ -2,12 +2,9 @@ from re import fullmatch
 import os
 import base64
 from chacha20 import Chacha
+from RSA import RSA
 from database import Database
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
 
 key = b"-\x8f%\x93\xf2\xa7\xa6C\xb2{BT\xd9\xdf\x86\x85\xbbl\x10')<\x18\xb2\x87z\xe7\t\x1er]\t"
 
@@ -15,6 +12,7 @@ key = b"-\x8f%\x93\xf2\xa7\xa6C\xb2{BT\xd9\xdf\x86\x85\xbbl\x10')<\x18\xb2\x87z\
 class App:
     def __init__(self):
         self.database = Database()
+        self.rsa = RSA()
 
     # method to validate email
     @staticmethod
@@ -168,26 +166,37 @@ class App:
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
         self.database.insert_reserve([restaurant, day, hour, string_email, string_nonce])
-        print("reserve donde")
+        print("reserve done")
         # save the updates and encrypt key with masterkey
         nonce_key = os.urandom(12)
         self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        # empezamos proceso de firma, concatenamos primero los parametros en un solo str para aplicar Scrypt
         todo_str = restaurant+day+hour+email
         salt = os.urandom(16)
         kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
         todo_encrypt = kdf.derive(bytes(todo_str, encoding="utf-8"))
+        # Cargamos la clave privada que se encuentra en la dirección indicada
         with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
             private_key = file.read()
+        # lo pasamos a bytes, que tendra el formato serializado
         private_key = self.str_to_byte(private_key)
-        private_key = serialization.load_pem_private_key(
-            private_key,
-            password=bytes("password", encoding="utf-8"),
-        )
-        signature = private_key.sign(todo_encrypt, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                                                               salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        # deserializamos la clave privada
+        private_key = self.rsa.deserialization_private(private_key)
+        # realizamos la firma con la clave privada
+        signature = self.rsa.sign_document(todo_encrypt, private_key)
+        # pasamos a str la firma y los datos encriptados para guardarlos en la base de datos
         todo_encrypt_str = self.byte_to_str(todo_encrypt)
         signature_str = self.byte_to_str(signature)
         self.database.insert_sign_reserve([todo_encrypt_str, signature_str])
+        # Cargamos la clave publica que se encuentra en la direccion indicada
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "r") as file:
+            public_key = file.read()
+        # lo pasamos a bytes, que tendra el formato serializado
+        public_key = self.str_to_byte(public_key)
+        # deserializamos la clave privada
+        public_key = self.rsa.deserialization_public(public_key)
+        # realizamos la comprobación de la firma, para saber si está bien
+        self.rsa.verify_document(todo_encrypt, signature, public_key)
 
         return True
 
@@ -311,46 +320,8 @@ def main():
 
     return
 
-
 def main2():
-    app = App()
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
-    public_key = private_key.public_key()
-
-    pem_public = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-
-    pem_private = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.BestAvailableEncryption(bytes("password", encoding="utf-8"))
-    )
-    pem_private_str = app.byte_to_str(pem_private)
-    pem_public_str = app.byte_to_str(pem_public)
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "w") as file:
-        file.write(pem_private_str)
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "w") as file2:
-        file2.write(pem_public_str)
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
-        private_key2 = file.read()
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "r") as file:
-        public_key2 = file.read()
-
-    pem_private_bytes = app.str_to_byte(private_key2)
-    pem_public_bytes = app.str_to_byte(public_key2)
-
-    # Esto deserializa la clave
-
-    private_key = serialization.load_pem_private_key(
-        pem_private_bytes,
-        password=bytes("password", encoding="utf-8"),
-    )
-
+    pass
 
 main()
 
