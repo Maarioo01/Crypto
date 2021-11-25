@@ -61,7 +61,6 @@ class RSA:
     @staticmethod
     def verify_document(data, signature, public_key):
         public_key.verify(signature, data, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                                                       salt_length=padding.PSS.MAX_LENGTH),
-                          hashes.SHA256())
+                                                       salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
         return True
 

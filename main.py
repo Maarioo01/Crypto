@@ -53,15 +53,24 @@ class App:
         bytes_bis = base64.urlsafe_b64decode(b64_bytes_bis)
         return bytes_bis
 
-    def save_key(self, data, nonce, aad):
+    # metodo para guardar las keys en el almacen que le corresponde (para simplificar lineas de codigo)
+    def save_key(self, data, nonce, aad, tipo):
         key_object = Chacha(data, key, nonce, aad)
         key_encrypt = key_object.encrypt()
         string_key = self.byte_to_str(key_encrypt)
         string_nonce_key = self.byte_to_str(nonce)
-        self.database.insert_key([string_key, string_nonce_key])
+        if tipo == "order":
+            self.database.insert_key_order([string_key, string_nonce_key])
+        elif tipo == "signup":
+            self.database.insert_key([string_key, string_nonce_key])
+        elif tipo == "reserve":
+            self.database.insert_key_reserve([string_key, string_nonce_key])
+        elif tipo == "payment":
+            self.database.insert_key_payment([string_key, string_nonce_key])
+
         return True
 
-    # method to sign up HAY QUE HACER AUTENTICACION CON SCRYPT
+    # method to sign up
     def sign_up(self, name, email, password):
         # first validate email and password
         if not self.validate_email(email) or not self.validate_password(password):
@@ -76,7 +85,7 @@ class App:
         kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
         password_encrypt = kdf.derive(bytes(password, encoding="utf-8"))
         string_password = self.byte_to_str(password_encrypt)
-        # encrypt email and salt with Chacha20Poly
+        # encrypt email and salt with Chacha20Poly (el salt no es necesario pero hablado con la profe lo dejamos asi)
         nonce = os.urandom(12)
         key_once = os.urandom(32)
         email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(name, encoding="utf-8"))
@@ -90,7 +99,7 @@ class App:
         self.database.insert_user([name, string_email, string_password, string_nonce, string_salt])
         # encrypt masterkey with new nonce and save
         nonce_key = os.urandom(12)
-        self.save_key(key_once, nonce_key, bytes(name, encoding="utf-8"))
+        self.save_key(key_once, nonce_key, bytes(name, encoding="utf-8"), "signup")
         return True
         # save the updates
 
@@ -112,9 +121,11 @@ class App:
         bytes_nonce_key = self.str_to_byte(list_key[1])
         key_object = Chacha(bytes_key, key, bytes_nonce_key, bytes(name, encoding="utf-8"))
         key_once = key_object.decrypt()
-        salt = list_data[0][4]
-        bytes_salt = self.str_to_byte(salt)
+        # cogemos el salt correspondiente y lo pasamos a bytes
+        bytes_salt = self.str_to_byte(list_data[0][4])
+        # cogemos el nonce correspondiente y lo pasamos a bytes
         nonce = self.str_to_byte(list_data[0][3])
+        # desencriptamos el salt para hacer scrypt y autenticar
         salt_object = Chacha(bytes_salt, key_once, nonce, bytes(name, encoding="utf-8"))
         salt_decrypt = salt_object.decrypt()
         # encrypt password with the salt to compare
@@ -153,7 +164,7 @@ class App:
 
     def reserve(self, restaurant, day, hour, email):
         # open the storage of reserves
-        # buscar restaurant day y hour si lista vacia es que no hay reserva
+        # buscar restaurant day y hour si lista vacia es que no hay reserva y se puede hacer
         list_restaurant = self.database.read_content_reserve([restaurant, day, hour])
         if len(list_restaurant) != 0:
             print("This reserve is already done")
@@ -169,35 +180,44 @@ class App:
         print("reserve done")
         # save the updates and encrypt key with masterkey
         nonce_key = os.urandom(12)
-        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"), "reserve")
         # empezamos proceso de firma, concatenamos primero los parametros en un solo str para aplicar Scrypt
         todo_str = restaurant+day+hour+email
-        salt = os.urandom(16)
-        kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
-        todo_encrypt = kdf.derive(bytes(todo_str, encoding="utf-8"))
         # Cargamos la clave privada que se encuentra en la dirección indicada
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave.txt", "r") as file:
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_private.txt", "r") as file:
             private_key = file.read()
         # lo pasamos a bytes, que tendra el formato serializado
         private_key = self.str_to_byte(private_key)
         # deserializamos la clave privada
         private_key = self.rsa.deserialization_private(private_key)
         # realizamos la firma con la clave privada
-        signature = self.rsa.sign_document(todo_encrypt, private_key)
+        signature = self.rsa.sign_document(bytes(todo_str, encoding="utf-8"), private_key)
         # pasamos a str la firma y los datos encriptados para guardarlos en la base de datos
-        todo_encrypt_str = self.byte_to_str(todo_encrypt)
         signature_str = self.byte_to_str(signature)
-        self.database.insert_sign_reserve([todo_encrypt_str, signature_str])
+        self.database.insert_sign_reserve([todo_str, signature_str])
+
+        return True
+
+    # metodo para simular la verificación que un usuario quiere hacer
+    def reserve_verify(self, restaurant, day, hour, email):
         # Cargamos la clave publica que se encuentra en la direccion indicada
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave2.txt", "r") as file:
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_publica.txt", "r") as file:
             public_key = file.read()
         # lo pasamos a bytes, que tendra el formato serializado
         public_key = self.str_to_byte(public_key)
-        # deserializamos la clave privada
+        # deserializamos la clave publica
         public_key = self.rsa.deserialization_public(public_key)
+        # concatenamos los parametros
+        reserve = restaurant+day+hour+email
+        # obtenemos de la base de datos la firma que corresponda con esos parámetros, si esta vacío no existe
+        signature = self.database.search_signature([reserve])
+        if len(signature) == 0:
+            print("This reserve doesn't exit")
+            return
+        signature = self.str_to_byte(signature[0][0])
         # realizamos la comprobación de la firma, para saber si está bien
-        self.rsa.verify_document(todo_encrypt, signature, public_key)
-
+        self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, public_key)
+        print("All correct")
         return True
 
     # method to order
@@ -223,7 +243,8 @@ class App:
         print("Order done")
         # save and encrypt key with masterkey
         nonce_key = os.urandom(12)
-        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"), "order")
+        # empieza la parte para realizar el payment
         option = input("select your payment method, cash or card: ")
         while option != "cash" and option != "card":
             option = input("select your payment method: ").lower()
@@ -233,12 +254,12 @@ class App:
     def checkout(self, option, email, type, restaurant):
         if option == "card":
             credit_card = input("Introduce your number card: ")
-            self.payment_card(credit_card, email, type, restaurant, option)
+            self.payment(credit_card, email, type, restaurant, option)
         print("your payment will be made in delivery")
-        self.payment_card("None", email, type, restaurant, option)
+        self.payment("None", email, type, restaurant, option)
 
     # method to pay
-    def payment_card(self, credit_card, email, type, restaurant, option):
+    def payment(self, credit_card, email, type, restaurant, option):
         # open the storage of credit-cards
         # encrypt number of credit card and email
         nonce = os.urandom(12)
@@ -257,7 +278,7 @@ class App:
         print("pay already saved")
         # save and encrypt key with masterkey
         nonce_key = os.urandom(12)
-        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"))
+        self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"), "payment")
         return True
 
 
@@ -293,7 +314,7 @@ def main():
                 while option != "sign up" and option != "log in":
                     option = input("sign up or log in?: ").lower()
 
-    option = input("search, reserve or order?: ")
+    option = input("search, reserve, order, verify or exit?: ")
     while option != "exit":
         if option == "search":
             search = input("What you want to search?: ").lower()
@@ -315,21 +336,44 @@ def main():
             address = input("Introduce the address: ").lower()
             hour = input("Introduce the hour: ")
             app.order(restaurant, address, email, hour)
+        elif option == "verify":
+            restaurant = input("Introduce the restaurant: ")
+            while not app.search(restaurant):
+                restaurant = input("Introduce the restaurant: ")
+            day = input("introduce the day: ")
+            while not app.validate_day(day):
+                day = input("introduce the day: ")
+            hour = input("Introduce the hour: ")
+            app.reserve_verify(restaurant, day, hour, email)
 
-        option = input("search, reserve or order?: ")
+        option = input("search, reserve, order, verify or exit?: ")
 
     return
 
-def main2():
-    pass
+
+# esta parte muestra como se han creado y guardado la clave privada y publica de rsa para firmar
+def rsa_main():
+    app = App()
+    # generamos la clave privada
+    private_key = app.rsa.generate_private_key()
+    # generamos la clave publica
+    public_key = app.rsa.generate_public_key(private_key)
+    # serializamos la clave privada para pasarlo a str y guardarlo en el txt
+    private_key_serialize = app.rsa.serialization_private(private_key)
+    # serializamos la clave privada para pasarlo a str y guardarlo en el txt
+    public_key_serialize = app.rsa.serialization_public(public_key)
+    # pasamos las dos claves de bytes a str
+    private_key_str = app.byte_to_str(private_key_serialize)
+    public_key_str = app.byte_to_str(public_key_serialize)
+    # Con esta parte generamos los archivos donde se guardar y lo escribimos
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_private.txt", "w") as file:
+        file.write(private_key_str)
+    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_publica.txt", "w") as file2:
+        file2.write(public_key_str)
+
 
 main()
 
-"""RSA para firmar y verificar hay que generar clave publica , clave privada cifrada (No hace falta del todo porque es 
- similar a serializar con contraseña) y clave publica sin cifrar. Esto se puede aplicar en firmar entera la base de 
- datos para verificar si se ha cambiado algo o no, hacer una firma en cada pedido por si algun usuario tiene un 
- problema y usar la verificacion para que el pedido es el mismo, igual con las reservas. LAS CLAVES PRIVADAS Y 
- PUBLICAS SE GENERAN UNA VEZ Y SE PONDRAN ARRIBA PORQUE FIRMAMOS NOSOTROS, NO EL USUARIO"""
 
 """Cambiar metodo de payment, ahora en reserve no se llama porque no se puede pagar una reserva por la app, solo se llama
 desde order, y para poder conseguir facilmente los id etc, se guardan todos en el mismo fichero, si el tipo es order

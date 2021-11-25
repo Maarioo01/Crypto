@@ -158,4 +158,14 @@ class Database:
         table.commit()
         table.close()
 
+    @staticmethod
+    def search_signature(data):
+        table = sql.connect("App.db")
+        cursor = table.cursor()
+        instruction = f"SELECT sign FROM sign_reserve WHERE message = ?"
+        cursor.execute(instruction, data)
+        datos = cursor.fetchall()
+        table.commit()
+        table.close()
+        return datos
 
