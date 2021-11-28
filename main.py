@@ -76,17 +76,18 @@ class App:
         # first validate email and password
         if not self.validate_email(email) or not self.validate_password(password):
             return False
-        # open storage of users
+        # get the info of the user
         list_data = self.database.read_content_user(name)
+        # if list_data is empty the user doesn't exist
         if len(list_data) != 0:
             print("user already exits")
             return False
-        # Encrypt password with scrypt
+        # Encrypt password with Scrypt
         salt = os.urandom(16)
         kdf = Scrypt(salt, 32, 2 ** 14, 8, 1)
         password_encrypt = kdf.derive(bytes(password, encoding="utf-8"))
         string_password = self.byte_to_str(password_encrypt)
-        # encrypt email and salt with Chacha20Poly (el salt no es necesario pero hablado con la profe lo dejamos asi)
+        # encrypt email and salt with Chacha20Poly (salt don't need to be encrypted but we do for more security)
         nonce = os.urandom(12)
         key_once = os.urandom(32)
         email_object = Chacha(bytes(email, encoding="utf-8"), key_once, nonce, bytes(name, encoding="utf-8"))
@@ -97,39 +98,40 @@ class App:
         string_email = self.byte_to_str(email_encrypt)
         string_nonce = self.byte_to_str(nonce)
         string_salt = self.byte_to_str(salt_encrypt)
+        # save in db
         self.database.insert_user([name, string_email, string_password, string_nonce, string_salt])
-        # encrypt masterkey with new nonce and save
+        # encrypt the key used with the masterkey and the new nonce and save
         nonce_key = os.urandom(12)
+        # save the key in its table
         self.save_key(key_once, nonce_key, bytes(name, encoding="utf-8"), "signup")
         return True
-        # save the updates
 
     # method to log in
     def log_in(self, name, password):
-        # first validate email and password
+        # first validate password
         if not self.validate_password(password):
             return False
         # get the user by name from db
         list_data = self.database.read_content_user(name)
+        # if list_data is empty the user doesn't exist
         if len(list_data) == 0:
             print("user doesn't exit")
             return False
         # get the rowid to get the key
         id_user = self.database.read_id_user(name)
-        # get key to decrypt salt
+        # get key to decrypt salt by the rowid
         list_key = self.database.find_key(id_user[0])
         bytes_key = self.str_to_byte(list_key[0])
         bytes_nonce_key = self.str_to_byte(list_key[1])
         key_object = Chacha(bytes_key, key, bytes_nonce_key, bytes(name, encoding="utf-8"))
         key_once = key_object.decrypt()
-        # cogemos el salt correspondiente y lo pasamos a bytes
+        # get the salt
         bytes_salt = self.str_to_byte(list_data[0][4])
-        # cogemos el nonce correspondiente y lo pasamos a bytes
+        # get the nonce
         nonce = self.str_to_byte(list_data[0][3])
-        # desencriptamos el salt para hacer scrypt y autenticar
+        # decrypt the salt to generate Scrypt object and verify
         salt_object = Chacha(bytes_salt, key_once, nonce, bytes(name, encoding="utf-8"))
         salt_decrypt = salt_object.decrypt()
-        # encrypt password with the salt to compare
         kdf = Scrypt(salt_decrypt, 32, 2 ** 14, 8, 1)
         password_bytes = self.str_to_byte(list_data[0][2])
         kdf.verify(bytes(password, encoding="utf-8"), password_bytes)
@@ -215,32 +217,28 @@ class App:
         signature = self.str_to_byte(signature[0][0])
         # realizamos la comprobación de la firma, para saber si está bien
         self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, public_key)
+        # Abrimos 01
         with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\01.pem", "rb") as file:
             certificate_bite = file.read()
         # objeto certificado de la app
-        bite = self.objeto_certificado(certificate_bite)
-        # vemos si coinciden las claves públicas
+        bite = x509.load_pem_x509_certificate(certificate_bite)
+        # abrimos ac1
         with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\ac1cert.pem", "rb") as file:
             certificate_ac1 = file.read()
         # objeto certificado de ac1
-        ac1 = self.objeto_certificado(certificate_ac1)
+        ac1 = x509.load_pem_x509_certificate(certificate_ac1)
+        # verificamos el certificado
         self.verify_certificate(bite, ac1)
         self.verify_certificate(ac1, ac1)
         print("All correct")
         return True
 
     @staticmethod
-    def objeto_certificado(certificate):
-        # creamos el certificado
-        autoridad = x509.load_pem_x509_certificate(certificate)
-        return autoridad
-
-    @staticmethod
     def verify_certificate(certificate, upper_level):
         #
-        certificate_public_key = certificate.public_key()
+        certificate_public_key = upper_level.public_key()
         #
-        cert_to_check = upper_level
+        cert_to_check = certificate
         #
         value = certificate_public_key.verify(
             cert_to_check.signature,
@@ -253,9 +251,9 @@ class App:
     # method to order
     def order(self, restaurant, address, email, hour):
         # open the storage of orders
-        # Con esta opción solo esta disponible hacer un pedido por cada hora es decir a las 2 no se pueden tener
-        # dos pedidos
+        # with this option we only have a order each time, 11:00 only 1 order, 11:01 only 1 order an go on.
         list_order = self.database.read_content_order([restaurant, hour])
+        # if list_order is not empty, can't do a order in this hour
         if len(list_order) != 0:
             print("We can't offer you this service")
             return False
@@ -271,10 +269,10 @@ class App:
         string_nonce = self.byte_to_str(nonce)
         self.database.insert_order([restaurant, hour, string_address, string_email, string_nonce])
         print("Order done")
-        # save and encrypt key with masterkey
+        # save and encrypt key with masterkey and the new nonce
         nonce_key = os.urandom(12)
         self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"), "order")
-        # empieza la parte para realizar el payment
+        # Payment part
         option = input("select your payment method, cash or card: ")
         while option != "cash" and option != "card":
             option = input("select your payment method: ").lower()
@@ -285,6 +283,7 @@ class App:
         if option == "card":
             credit_card = input("Introduce your number card: ")
             self.payment(credit_card, email, type, restaurant, option)
+        # if option is not card, is cash and it will be made in delivery
         print("your payment will be made in delivery")
         self.payment("None", email, type, restaurant, option)
 
@@ -404,12 +403,3 @@ def rsa_main():
 
 main()
 
-
-"""Cambiar metodo de payment, ahora en reserve no se llama porque no se puede pagar una reserva por la app, solo se llama
-desde order, y para poder conseguir facilmente los id etc, se guardan todos en el mismo fichero, si el tipo es order
-credit number se pone a none. ADEMÁS HACER METODO PARA GUARDAR LA MASTER KEY(que vaya desde que se genera el nonce de la
-key hasta que se accede a la base, hacer metodo que se llame savekey y hace todo eso? añadir tambien regex de 
-direeciones?"""
-
-"""Hacer hash a los datos concatenados con Scrypt para hacer la función resumen y firmar, hacer en order y en 
-creditcard. HACER UNA CLASE APARTE QUE TENGA LOS METODOS DE LEER, SERIALIZAR Y DESERIALIZAR, FIRMAR Y VERIFICAR"""
