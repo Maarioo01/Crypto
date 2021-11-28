@@ -1,8 +1,9 @@
 from re import fullmatch
 import os
 import base64
+from cryptography import x509
 from chacha20 import Chacha
-from RSA import RSA
+from RSA import *
 from database import Database
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
@@ -130,11 +131,8 @@ class App:
         salt_decrypt = salt_object.decrypt()
         # encrypt password with the salt to compare
         kdf = Scrypt(salt_decrypt, 32, 2 ** 14, 8, 1)
-        password_encrypt = kdf.derive(bytes(password, encoding="utf-8"))
-        string_password = self.byte_to_str(password_encrypt)
-        if list_data[0][2] != string_password:
-            print("Credentials doesn't match")
-            return False
+        password_bytes = self.str_to_byte(list_data[0][2])
+        kdf.verify(bytes(password, encoding="utf-8"), password_bytes)
         return True
 
     # method to search restaurants/tags
@@ -204,9 +202,9 @@ class App:
         with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_publica.txt", "r") as file:
             public_key = file.read()
         # lo pasamos a bytes, que tendra el formato serializado
-        public_key = self.str_to_byte(public_key)
+        public_key2 = self.str_to_byte(public_key)
         # deserializamos la clave publica
-        public_key = self.rsa.deserialization_public(public_key)
+        public_key = self.rsa.deserialization_public(public_key2)
         # concatenamos los parametros
         reserve = restaurant+day+hour+email
         # obtenemos de la base de datos la firma que corresponda con esos parámetros, si esta vacío no existe
@@ -217,8 +215,40 @@ class App:
         signature = self.str_to_byte(signature[0][0])
         # realizamos la comprobación de la firma, para saber si está bien
         self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, public_key)
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\01.pem", "rb") as file:
+            certificate_bite = file.read()
+        # objeto certificado de la app
+        bite = self.objeto_certificado(certificate_bite)
+        # vemos si coinciden las claves públicas
+        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\ac1cert.pem", "rb") as file:
+            certificate_ac1 = file.read()
+        # objeto certificado de ac1
+        ac1 = self.objeto_certificado(certificate_ac1)
+        self.verify_certificate(bite, ac1)
+        self.verify_certificate(ac1, ac1)
         print("All correct")
         return True
+
+    @staticmethod
+    def objeto_certificado(certificate):
+        # creamos el certificado
+        autoridad = x509.load_pem_x509_certificate(certificate)
+        return autoridad
+
+    @staticmethod
+    def verify_certificate(certificate, upper_level):
+        #
+        certificate_public_key = certificate.public_key()
+        #
+        cert_to_check = upper_level
+        #
+        value = certificate_public_key.verify(
+            cert_to_check.signature,
+            cert_to_check.tbs_certificate_bytes,
+            padding.PKCS1v15(),
+            cert_to_check.signature_hash_algorithm,
+        )
+        return value
 
     # method to order
     def order(self, restaurant, address, email, hour):
