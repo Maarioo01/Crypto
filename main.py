@@ -28,7 +28,7 @@ class App:
     def validate_password(password):
         if not isinstance(password, str) or fullmatch(r"^(?=\w*\d)(?=\w*[A-Z])(?=\w*[a-z])\S{8,16}$", password,
                                                       flags=0) is None:
-            print("password must contain Upper and lower characters, digits and special characters")
+            print("password must contain Upper and lower characters, digits and special characters. min length = 8")
             return False
         return True
 
@@ -37,6 +37,13 @@ class App:
     def validate_day(day):
         if not isinstance(day, str) or (int(day) < 1) or (int(day) > 30):
             print("day not valid")
+            return False
+        return True
+
+    @staticmethod
+    def validate_hour(hour):
+        if not isinstance(hour, str) or fullmatch(r'^(1?[0-9]|2[0-3]):[0-5][0-9]$', hour, flags=0) is None:
+            print("hour or format incorrect")
             return False
         return True
 
@@ -134,7 +141,11 @@ class App:
         salt_decrypt = salt_object.decrypt()
         kdf = Scrypt(salt_decrypt, 32, 2 ** 14, 8, 1)
         password_bytes = self.str_to_byte(list_data[0][2])
-        kdf.verify(bytes(password, encoding="utf-8"), password_bytes)
+        try:
+            kdf.verify(bytes(password, encoding="utf-8"), password_bytes)
+        except Exception as e:
+            print("Credentials doesn't match", e)
+            return False
         return True
 
     # method to search restaurants/tags
@@ -181,18 +192,26 @@ class App:
         # save the updates and encrypt key with masterkey
         nonce_key = os.urandom(12)
         self.save_key(key_once, nonce_key, bytes(email, encoding="utf-8"), "reserve")
-        # empezamos proceso de firma, concatenamos primero los parametros en un solo str para aplicar Scrypt
-        todo_str = restaurant+day+hour+email
-        # Cargamos la clave privada que se encuentra en la dirección indicada
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_private.txt", "r") as file:
+        # start sign method, concatenate all parametres
+        todo_str = restaurant + day + hour + email
+        # load private key
+        with open("keys/clave_private.txt", "r") as file:
             private_key = file.read()
-        # lo pasamos a bytes, que tendra el formato serializado
+        # convert to bytes
         private_key = self.str_to_byte(private_key)
-        # deserializamos la clave privada
-        private_key = self.rsa.deserialization_private(private_key)
-        # realizamos la firma con la clave privada
-        signature = self.rsa.sign_document(bytes(todo_str, encoding="utf-8"), private_key)
-        # pasamos a str la firma y los datos encriptados para guardarlos en la base de datos
+        # deserialization private key
+        try:
+            private_key = self.rsa.deserialization_private(private_key)
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
+        # sign with private key
+        try:
+            signature = self.rsa.sign_document(bytes(todo_str, encoding="utf-8"), private_key)
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
+        # convert to str to save in db
         signature_str = self.byte_to_str(signature)
         self.database.insert_sign_reserve([todo_str, signature_str])
 
@@ -201,14 +220,14 @@ class App:
     # metodo para simular la verificación que un usuario quiere hacer
     def reserve_verify(self, restaurant, day, hour, email):
         # Cargamos la clave publica que se encuentra en la direccion indicada
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_publica.txt", "r") as file:
+        with open("keys/clave_publica.txt", "r") as file:
             public_key = file.read()
         # lo pasamos a bytes, que tendra el formato serializado
-        public_key2 = self.str_to_byte(public_key)
+        public_key = self.str_to_byte(public_key)
         # deserializamos la clave publica
-        public_key = self.rsa.deserialization_public(public_key2)
+        public_key = self.rsa.deserialization_public(public_key)
         # concatenamos los parametros
-        reserve = restaurant+day+hour+email
+        reserve = restaurant + day + hour + email
         # obtenemos de la base de datos la firma que corresponda con esos parámetros, si esta vacío no existe
         signature = self.database.search_signature([reserve])
         if len(signature) == 0:
@@ -216,35 +235,51 @@ class App:
             return
         signature = self.str_to_byte(signature[0][0])
         # realizamos la comprobación de la firma, para saber si está bien
-        self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, public_key)
+        try:
+            self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, public_key)
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
         # Abrimos 01
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\01.pem", "rb") as file:
+        with open("certificates/01.pem", "rb") as file:
             certificate_bite = file.read()
         # objeto certificado de la app
         bite = x509.load_pem_x509_certificate(certificate_bite)
+        # realizamos la comprobación de la firma con la clave pública del certificado generado
+        try:
+            self.rsa.verify_document(bytes(reserve, encoding="utf-8"), signature, bite.public_key())
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
         # abrimos ac1
-        with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\ac1cert.pem", "rb") as file:
+        with open("certificates/ac1cert.pem", "rb") as file:
             certificate_ac1 = file.read()
         # objeto certificado de ac1
         ac1 = x509.load_pem_x509_certificate(certificate_ac1)
-        # verificamos el certificado
-        self.verify_certificate(bite, ac1)
-        self.verify_certificate(ac1, ac1)
+        # verificamos los certificados
+        try:
+            self.verify_certificate(bite, ac1)
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
+        try:
+            self.verify_certificate(ac1, ac1)
+        except Exception as e:
+            print("something went grong, try again", e)
+            return False
         print("All correct")
         return True
 
     @staticmethod
-    def verify_certificate(certificate, upper_level):
-        #
-        certificate_public_key = upper_level.public_key()
-        #
-        cert_to_check = certificate
-        #
+    def verify_certificate(certificado, check_cert):
+        # cogemos la public key del nivel superior
+        certificate_public_key = check_cert.public_key()
+        # verify
         value = certificate_public_key.verify(
-            cert_to_check.signature,
-            cert_to_check.tbs_certificate_bytes,
+            certificado.signature,
+            certificado.tbs_certificate_bytes,
             padding.PKCS1v15(),
-            cert_to_check.signature_hash_algorithm,
+            certificado.signature_hash_algorithm,
         )
         return value
 
@@ -357,6 +392,8 @@ def main():
             while not app.validate_day(day):
                 day = input("introduce the day: ")
             hour = input("Introduce the hour: ")
+            while not app.validate_hour(hour):
+                hour = input("introduce the hour in format hh:mm : ")
             app.reserve(restaurant, day, hour, email)
         elif option == "order":
             restaurant = input("Introduce the restaurant: ")
@@ -364,6 +401,8 @@ def main():
                 restaurant = input("Introduce the restaurant: ")
             address = input("Introduce the address: ").lower()
             hour = input("Introduce the hour: ")
+            while not app.validate_hour(hour):
+                hour = input("introduce the hour in format hh:mm : ")
             app.order(restaurant, address, email, hour)
         elif option == "verify":
             restaurant = input("Introduce the restaurant: ")
@@ -373,6 +412,8 @@ def main():
             while not app.validate_day(day):
                 day = input("introduce the day: ")
             hour = input("Introduce the hour: ")
+            while not app.validate_hour(hour):
+                hour = input("introduce the hour in format hh:mm : ")
             app.reserve_verify(restaurant, day, hour, email)
 
         option = input("search, reserve, order, verify or exit?: ")
@@ -395,11 +436,10 @@ def rsa_main():
     private_key_str = app.byte_to_str(private_key_serialize)
     public_key_str = app.byte_to_str(public_key_serialize)
     # Con esta parte generamos los archivos donde se guardar y lo escribimos
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_private.txt", "w") as file:
+    with open("/keys/clave_private.txt", "w") as file:
         file.write(private_key_str)
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_publica.txt", "w") as file2:
+    with open("/keys/clave_publica.txt", "w") as file2:
         file2.write(public_key_str)
 
 
 main()
-

@@ -50,7 +50,7 @@ class CSR:
 def main3():
     csr = CSR()
     rsa = RSA()
-    with open("C:\\Users\\Mario\\PycharmProjects\\Crypto\\clave_private.txt", "r") as file:
+    with open("/keys/clave_private.txt", "r") as file:
         private_key = file.read()
     private_key = csr.str_to_byte(private_key)
     private_key = rsa.deserialization_private(private_key)
