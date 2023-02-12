@@ -1,2 +1,2 @@
-# Crypto grupo 4??
-Repositorio para la practica ce crypto
+# Crypto 
+Repositorio para la practica de crypto
